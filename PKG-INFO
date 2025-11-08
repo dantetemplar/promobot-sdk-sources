@@ -1,0 +1,93 @@
+Metadata-Version: 2.4
+Name: pm_python_sdk
+Version: 0.6.7
+Summary: SDK for Promobot manipulator control
+Home-page: https://promo-bot.ru/promobot-m-edu/
+Author: Promobot
+Author-email: info@promo-bot.ru
+Classifier: Programming Language :: Python :: 3.12
+Classifier: License :: OSI Approved :: MIT License
+Classifier: Operating System :: OS Independent
+Requires-Python: >=3.12
+Description-Content-Type: text/markdown
+License-File: LICENSE
+Dynamic: author
+Dynamic: author-email
+Dynamic: classifier
+Dynamic: description
+Dynamic: description-content-type
+Dynamic: home-page
+Dynamic: license-file
+Dynamic: requires-python
+Dynamic: summary
+
+# pm_python_sdk
+
+## Подключение и установка
+    from sdk.manipulators.medu import MEdu`
+    
+    manipulator = MEdu(host, client_id, login, password) # Создание экземпляра
+    manipulator.connect() # Подключение к устройству
+
+    # Чтобы определить host, выполните команду ip a на манипуляторе. client_id, login, password допускаются любые
+
+## Команды
+Перед выполнением команд требуется получить доступ к манипулятору:
+`manipulator.get_control()`
+
+### Перемещение в декартовых координатах
+    manipulator.move_to_coordinates(
+        MoveCoordinatesParamsPosition(0.3, 0, 0.2),
+        MoveCoordinatesParamsOrientation(0, 0, 0, 1),
+        0.2,
+        0.2)
+
+### Перемещение в углах
+    manipulator.move_to_angles(0, 0, 1)
+
+## Пример
+    import asyncio
+
+    from sdk.commands.move_coordinates_command import MoveCoordinatesParamsPosition, MoveCoordinatesParamsOrientation
+    from sdk.manipulators.medu import MEdu
+
+    host: str = 'localhost' # Чтобы определить host, выполните команду ip a на манипуляторе
+    client_id: str = '12'
+    login: str = '13'
+    password: str = '14'
+    
+    manipulator = MEdu(host, client_id, login, password)
+    
+    try:
+        manipulator.connect()
+        print('Подключение установлено')
+        coordinates = manipulator.get_cartesian_coordinates()
+        print('Координаты')
+        print(coordinates)
+        joints = manipulator.get_joint_state()
+        print('Узлы')
+        print(joints)
+        manipulator.get_control()
+        print('Получено управление манипулятором')
+        manipulator.move_to_coordinates(
+            MoveCoordinatesParamsPosition(0.3, 0, 0.2),
+            MoveCoordinatesParamsOrientation(0, 0, 0, 1),
+            0.2,
+            0.2)
+        print('Манипулятор доехал в точку')
+        manipulator.move_to_angles(0, 0, 1)
+        print('Манипулятор доехал до углов')
+        manipulator.nozzle_power(True)
+        print('Включили питание на стреле')
+        manipulator.manage_gripper(40, 40)
+        print('Повернули гриппер')
+        manipulator.manage_vacuum(-40, True)
+        print('Включили вакуумный насос')
+        await asyncio.sleep(5)
+        manipulator.manage_vacuum(40, False)
+        print('Выключили вакуумный насос')
+        manipulator.nozzle_power(False)
+        print('Выключили питание на стреле')
+    except Exception as e:
+        print('Возникла ошибка')
+        print(e)
