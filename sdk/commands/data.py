@@ -27,6 +27,17 @@ class Orientation(CustomModel):
     w: Union[int, float] = 1.0
 
 
+class Point3D(CustomModel):
+    position: Position
+    orientation: Orientation = Orientation()
+
+    def to_dict(self) -> dict:
+        return {
+            'position': self.position.to_dict(),
+            'orientation': self.orientation.to_dict()
+        }
+
+
 class Pose(CustomModel):
     position: Position
     orientation: Orientation = Orientation()
@@ -50,3 +61,15 @@ class Point(CustomModel):
             position_dict[position.joint_name] = position.position
             velocity_dict[position.joint_name] = position.velocity
         return {'positions': position_dict, 'velocities': velocity_dict}
+
+
+class JointPosition(CustomModel):
+    joint: str
+    position: float
+
+
+class JointPositions(CustomModel):
+    positions: list[JointPosition]
+
+    def to_dict(self) -> list[dict[str, float]]:
+        return [{"joint": jp.joint, "position": jp.position} for jp in self.positions]

@@ -7,6 +7,7 @@ from sdk.commands.palletizing_movement import PaletizingMovement
 from sdk.commands.move_angles_command import MoveAnglesCommandParamsAngleInfo
 from sdk.commands.data import Pose, Orientation
 from sdk.commands.gpio_mask import SetGpioMask, GetGpioMask
+from sdk.commands.manipulator_commands import GPIOConfigurePin
 from sdk.utils.constants import COMMAND_TOPIC, COMMAND_RESULT_TOPIC, COMMAND_FEEDBACK_TOPIC
 
 
@@ -39,7 +40,7 @@ class M13 (Manipulator):
         await self._run_async(
             self.move_to_angles,
             sp1, sp2, sp3, sp4, sp5, sp6,
-            sp1_v, sp2_v, sp3_v, sp4_v, sp5_v, sp5_v,
+            sp1_v, sp2_v, sp3_v, sp4_v, sp5_v, sp6_v,
             velocity_factor, acceleration_factor,
             timeout_seconds,
             throw_error,
@@ -225,6 +226,15 @@ class M13 (Manipulator):
                                                  throw_error)
         command.result()
         self.specific_command = None
+
+    def gpio_configure_pin(self, name: str, value: bool, timeout_seconds: float = 60.0, throw_error: bool = True) -> bool:
+        self.specific_command = GPIOConfigurePin(self.message_bus.publish, name, value, timeout_seconds, throw_error)
+        self.message_bus.subscribe(COMMAND_TOPIC)
+        self.message_bus.subscribe(COMMAND_RESULT_TOPIC)
+        self.specific_command.make_command_action()
+        result: dict[str, Any] = self.specific_command.result()
+        self.specific_command = None
+        return result.get('result', False)
 
     def set_gpio_on_mask(self, name: str, value_mask: str, timeout_seconds: float = 60.0, throw_error: bool = True) -> None:
         self.message_bus.subscribe(COMMAND_TOPIC)

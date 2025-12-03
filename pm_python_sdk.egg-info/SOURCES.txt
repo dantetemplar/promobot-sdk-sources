@@ -14,6 +14,7 @@ sdk/commands/arc_motion.py
 sdk/commands/base_command.py
 sdk/commands/calibration_linear_module_command.py
 sdk/commands/data.py
+sdk/commands/get_home_position.py
 sdk/commands/get_manage_command.py
 sdk/commands/gpio_mask.py
 sdk/commands/gripper_control_command.py
@@ -21,7 +22,6 @@ sdk/commands/manipulator_commands.py
 sdk/commands/mgbot_conveyer_command.py
 sdk/commands/move_angles_command.py
 sdk/commands/move_coordinates_command.py
-sdk/commands/move_group.py
 sdk/commands/move_linear_module_command.py
 sdk/commands/nozzle_power_command.py
 sdk/commands/palletizing_movement.py

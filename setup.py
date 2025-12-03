@@ -9,7 +9,7 @@ setuptools.setup(
     # Имя дистрибутива пакета.
     name='pm_python_sdk',
     # Номер версии пакета.
-    version='0.6.7',
+    version='0.6.8',
     # Имя автора.
     author='Promobot',
     # Его почта.

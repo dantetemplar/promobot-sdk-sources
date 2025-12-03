@@ -1,7 +1,9 @@
 from typing import Any, Dict, Optional, Callable, List, Union
-from dataclasses import dataclass
+from dataclasses import dataclass, field
+from sdk.commands.data import Point3D
 from sdk.commands.abstracts.sdk_command import SdkCommand
 from sdk.commands.base_command import CommandParams
+from sdk.commands.data import Point3D, JointPositions
 
 # Константы для состояний манипулятора теперь определены в sdk.utils.enums.ManipulatorState
 
@@ -47,33 +49,24 @@ class RunProgramByNameCommand(SdkCommand):
 
 
 class RunPythonProgramCommand(SdkCommand):
-    def __init__(self, python_code: str, send_command: Callable[[str, dict], None], env_name: str = "", python_version: str = "3.12", requirements: Optional[List[str]] = None, timeout_seconds: float = 60.0, throw_error: bool = True, message_bus=None, enable_feedback: bool = False):
+    def __init__(self, python_code: str, send_command: Callable[[str, dict], None], python_version: str = "3.12", requirements: Optional[List[str]] = None, timeout_seconds: float = 60.0, throw_error: bool = True, message_bus=None, enable_feedback: bool = False):
         if requirements is None:
             requirements = []
+            
+        data = {
+            'python_version': python_version,
+            'code': python_code,
+            'requirements': requirements,
+        }
         super().__init__(
             send_command,
             "execute_python_code",
-            {
-                "env_name": env_name,
-                "python_version": python_version,
-                "code": python_code,
-                "requirements": requirements
-            },
+            data,
             timeout_seconds,
             throw_error,
             message_bus,
             enable_feedback
         )
-
-        data = {
-            'env_name': env_name,
-            'python_version': python_version,
-            'code': python_code,
-            'requirements': requirements,
-            'velocity_factor': 0.1,
-            'acceleration_factor': 0.1
-        }
-        super().__init__(send_command, 'run_python_program', data, timeout_seconds, throw_error)
 
     def get_topic(self) -> str:
         return 'manipulator/program/run/python'
@@ -104,6 +97,101 @@ class SetZeroZCommand(SdkCommand):
 
     def get_topic(self) -> str:
         return 'manipulator/set_zero_tool'
+
+
+class TCPDelete(SdkCommand):
+    def __init__(self,
+                 name: str,
+                 send_command: Callable[[str, dict], None],
+                 reset_current: bool = True,
+                 apply_other: str = "",
+                 timeout_seconds: float = 60.0,
+                 throw_error: bool = True,
+                 message_bus = None):
+        super().__init__(
+            send_command,
+            "tcp_delete",
+            {
+                "name": name,
+                "reset_current": reset_current,
+                "apply_other": apply_other
+            },
+            timeout_seconds,
+            throw_error,
+            message_bus
+        )
+
+
+class TCPAdd(SdkCommand):
+    def __init__(self,
+                 name: str,
+                 position: Point3D,
+                 apply: bool,
+                 send_command: Callable[[str, dict], None],
+                 timeout_seconds: float = 60.0,
+                 throw_error: bool = True,
+                 message_bus=None):
+        super().__init__(
+            send_command,
+            "tcp_add",
+            {
+                'name': name,
+                'pose': position.to_dict(),
+                'apply': apply
+            },
+            timeout_seconds,
+            throw_error,
+            message_bus
+        )
+
+
+class TCPApply(SdkCommand):
+    def __init__(self,
+                 name: str,
+                 send_command: Callable[[str, dict], None],
+                 timeout_seconds: float = 60.0,
+                 throw_error: bool = True,
+                 message_bus = None):
+        super().__init__(
+            send_command,
+            "tcp_apply",
+            {"name": name},
+            timeout_seconds,
+            throw_error,
+            message_bus
+        )
+
+
+class TCPGetCurrent(SdkCommand):
+    def __init__(self,
+                 send_command: Callable[[str, dict], None],
+                 timeout_seconds: float = 60.0,
+                 throw_error: bool = True,
+                 message_bus = None):
+        super().__init__(
+            send_command,
+            "tcp_get_current",
+            "None",
+            timeout_seconds,
+            throw_error,
+            message_bus
+        )
+
+
+class TCPGetList(SdkCommand):
+    def __init__(self,
+                 send_command: Callable[[str, dict], None],
+                 timeout_seconds: float = 60.0,
+                 throw_error: bool = True,
+                 message_bus = None):
+        super().__init__(
+            send_command,
+            "tcp_get_list",
+            "None",
+            timeout_seconds,
+            throw_error,
+            message_bus
+        )
 
 
 class WriteAnalogOutputCommand(SdkCommand):
@@ -163,6 +251,27 @@ class GetI2C(SdkCommand):
             send_command,
             'get_i2c',
             {'name': name},
+            timeout_seconds,
+            throw_error,
+            message_bus,
+        )
+
+
+class GPIOConfigurePin(SdkCommand):
+    def __init__(self,
+                 send_command: Callable[[str, dict], None],
+                 name: str,
+                 value: bool,
+                 timeout_seconds: float = 60.0,
+                 throw_error: bool = True,
+                 message_bus = None):
+        super().__init__(
+            send_command,
+            'gpio_pin_configure',
+            {
+                'name': name,
+                "active": value
+            },
             timeout_seconds,
             throw_error,
             message_bus,
@@ -254,3 +363,42 @@ class GetJointLimits(SdkCommand):
     def __post_init__(self):
         data = 'None'
         super().__init__(self.send_command, 'get_joint_limits', data, self.timeout_seconds, self.throw_error)
+
+
+@dataclass
+class MoveGroup(SdkCommand):
+    send_command: Callable[[str, dict], None]
+    points: List[Point3D] = field(default_factory=list)
+    positions: List[JointPositions] = field(default_factory=list)
+    move_group: str = "main"
+    planning_pipeline: str = "pilz_industrial_motion_planner"
+    planner_id: str = "PTP"
+    max_velocity: float = 0.5
+    max_acceleration: float = 0.5
+    min_factorial: float = 0.95
+    steps: float = 0.05
+    count_points: int = 50
+    timeout_seconds: float = 60.0
+    throw_error: bool = True
+
+    def __post_init__(self):
+        data: dict[str, Any] = {
+            "points": [point.to_dict() for point in self.points],
+            "positions": [jp.to_dict() for jp in self.positions],
+            "move_group": self.move_group,
+            "planning_pipeline": self.planning_pipeline,
+            "planner_id": self.planner_id,
+            "max_velocity": self.max_velocity,
+            "max_acceleration": self.max_acceleration,
+            "min_factorial": self.min_factorial,
+            "steps": self.steps,
+            "count_points": self.count_points
+        }
+
+        super().__init__(
+            self.send_command,
+            'move_group',
+            data,
+            self.timeout_seconds,
+            self.throw_error
+        )

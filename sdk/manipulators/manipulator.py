@@ -3,8 +3,7 @@ import asyncio
 import json
 from typing import Optional, List, Dict, Any, Union, Set, Callable
 
-from sdk.commands.data import Joint, Point, Pose
-from sdk.commands.move_group import MoveGroup, MoveType
+from sdk.commands.data import Joint, Point, Pose, Point3D, JointPositions
 from sdk.commands.abstracts.sdk_command import SdkCommand
 from sdk.commands.get_manage_command import GetManageCommand
 from sdk.commands.play_audio_command import PlayAudioCommand
@@ -12,18 +11,18 @@ from sdk.commands.move_angles_command import MoveAnglesCommand, MoveAnglesComman
 from sdk.commands.set_conveyor_velocity_command import SetConveyorVelocityCommand
 from sdk.commands.calibration_linear_module_command import CalibrateControllerCommand
 from sdk.commands.move_linear_module_command import MoveLinearModuleCommand
+from sdk.commands.get_home_position import GetHomePosition
 from sdk.manipulators.extern_devices.pixy_cam.pixy_cam_uart_module import PixyCamUartModule
 from sdk.manipulators.extern_devices.pixy_cam.pixy_cam_usb_module import PixyCamUsbModule
 from sdk.manipulators.extern_devices.mgbot.mgbot_conveyer import MGbotConveyer
 from sdk.commands.pixy_cam_get_coordinates_command import PixyCamGetCoordinatesCommand
 from sdk.commands.move_coordinates_command import MoveCoordinatesCommand, MoveCoordinatesParams, \
     MoveCoordinatesParamsPosition, MoveCoordinatesParamsOrientation, PlannerType
-from sdk.commands.manipulator_commands import SetStateCommand, GetGpio
+from sdk.commands.manipulator_commands import SetStateCommand, TCPAdd, GetGpio, SetJointLimits, GetJointLimits, JointLimit, WriteAnalogOutputCommand, WriteDigitalOutputCommand, TCPDelete, TCPApply, TCPGetCurrent, TCPGetList, MoveGroup
 from sdk.manipulators.manipulator_info import ManipulatorInfo
 from sdk.commands.arc_motion import ArcMotion, Pose
 from sdk.manipulators.manipulator_connection import ManipulatorConnection
 from sdk.promise import Promise
-from sdk.commands.manipulator_commands import SetJointLimits, GetJointLimits, JointLimit, WriteAnalogOutputCommand, WriteDigitalOutputCommand
 from sdk.utils.constants import COMMAND_TOPIC, MANAGEMENT_TOPIC, CARTESIAN_COORDINATES_TOPIC, JOINT_INFO_TOPIC, COMMAND_RESULT_TOPIC, COMMAND_FEEDBACK_TOPIC, PIXY_CAM_COORDINATES_TOPIC, MGBOT_TOPIC
 from sdk.commands import (
     RunProgramJsonCommand,
@@ -32,7 +31,7 @@ from sdk.commands import (
     StopMovementCommand,
     SetZeroZCommand,
     WriteI2C,
-    WriteGPIO
+    WriteGPIO,
 )
 from sdk.commands.servo_control_type_command import ServoControlTypeCommand, JOINT_JOG, TWIST, POSE
 from sdk.utils.enums import ManipulatorState, ServoControlType
@@ -233,13 +232,15 @@ class Manipulator:
                     
         if topic == MGBOT_TOPIC:
             print(f"[MANIPULATOR] MGBOT_TOPIC: {payload}")
-            
             try:
                 import json
                 data = json.loads(payload)       
                 if 'DistanceSensor' in data['data'] or 'ColorSensor' in data['data']:   
+                    p = self.mgbot_conveyer.mgbot_promise
                     self.mgbot_conveyer.last_sensor_data = data['data']
-                    self.mgbot_conveyer.mgbot_promise.resolve(True)         
+                    print(f"[MANIPULATOR] Обрабатываем mgbot_promise...")
+                    if p is not None:
+                        p.resolve(True)
             except Exception as e:
                 print(f"[MANIPULATOR] Ошибка: {e}")
 
@@ -249,14 +250,18 @@ class Manipulator:
             self.pixy_coordinates_promise.resolve(True)
         
         if not self.cartesian_coordinates_promise is None and topic == CARTESIAN_COORDINATES_TOPIC:
+            p = self.cartesian_coordinates_promise
             print(f"[MANIPULATOR] Обрабатываем cartesian_coordinates_promise...")
             self.last_cartesian_coordinates = payload
-            self.cartesian_coordinates_promise.resolve(True)
+            if p is not None:
+                p.resolve(True)
             
         if not self.joint_state_promise is None and topic == JOINT_INFO_TOPIC:
+            p = self.joint_state_promise
             print(f"[MANIPULATOR] Обрабатываем joint_state_promise...")
             self.last_joint_state = payload
-            self.joint_state_promise.resolve(True)
+            if p is not None:
+                p.resolve(True)
             
         # Вызываем пользовательский обработчик, если установлен
         if self._user_message_handler is not None:
@@ -544,7 +549,6 @@ class Manipulator:
 
     def run_python_program_async(self,
                                  python_code: str,
-                                 env_name: str = "",
                                  python_version: str = "3.12",
                                  requirements: List[str] = None,
                                  timeout_seconds: float = 60.0,
@@ -553,7 +557,6 @@ class Manipulator:
         self.specific_command = RunPythonProgramCommand(
             python_code,
             self.message_bus.publish,
-            env_name,
             python_version,
             requirements,
             timeout_seconds,
@@ -568,7 +571,6 @@ class Manipulator:
 
     async def run_python_program_async_await(self,
                                            python_code: str,
-                                           env_name: str = "",
                                            python_version: str = "3.12",
                                            requirements: List[str] = None,
                                            timeout_seconds: float = 60.0,
@@ -576,7 +578,6 @@ class Manipulator:
         await self._run_async(
             self.run_python_program,
             python_code,
-            env_name,
             python_version,
             requirements,
             timeout_seconds,
@@ -585,12 +586,11 @@ class Manipulator:
 
     def run_python_program(self,
                            python_code: str,
-                           env_name: str = "",
                            python_version: str = "3.12",
                            requirements: List[str] = None,
                            timeout_seconds: float = 60.0,
                            throw_error: bool = True) -> None:
-        command = self.run_python_program_async(python_code, env_name, python_version, requirements, timeout_seconds, throw_error)
+        command = self.run_python_program_async(python_code, python_version, requirements, timeout_seconds, throw_error)
         command.make_command_action()  # Отправляем команду
         command.result()
         self.specific_command = None
@@ -635,6 +635,28 @@ class Manipulator:
         command.result()
         self.specific_command = None
 
+    def tcp_add_async(self, name: str, position: Point3D, apply: bool, timeout_seconds: float = 60.0, throw_error: bool = True) -> TCPAdd:
+        self.specific_command = TCPAdd(
+            name,
+            position,
+            apply,
+            self.message_bus.publish,
+            timeout_seconds,
+            throw_error
+        )
+        self.message_bus.subscribe(COMMAND_TOPIC)
+        self.message_bus.subscribe(COMMAND_RESULT_TOPIC)
+        return self.specific_command
+
+    async def tcp_add_async_wait(self, name: str, position: Point3D, apply: bool, timeout_seconds: float = 60.0, throw_error: bool = True):
+        await self._run_async(self.tcp_add_async, name, position, apply, timeout_seconds, throw_error)
+
+    def tcp_add(self, name: str, position: Point3D, apply: bool, timeout_seconds: float = 60.0, throw_error: bool = True) -> None:
+        command = self.tcp_add_async(name, position, apply, timeout_seconds, throw_error)
+        command.make_command_action()
+        command.result()
+        self.specific_command = None
+
     def write_analog_output_async(self, channel: int, value: float, timeout_seconds: float = 60.0, throw_error: bool = True) -> WriteAnalogOutputCommand:
         self.specific_command = WriteAnalogOutputCommand(
             channel,
@@ -664,13 +686,71 @@ class Manipulator:
         return self.specific_command
 
     async def write_gpio_async_await(self, name: str, value: int, timeout_seconds: float = 60.0, throw_error: bool = True) -> None:
-        await self._run_async(self.write_gpio_async, name, value, timeout_seconds, throw_error)
+        await self._run_async(self.write_gpio, name, value, timeout_seconds, throw_error)
 
     def write_gpio(self, name: str, value: int, timeout_seconds: float = 60.0, throw_error: bool = True) -> None:
         command = self.write_gpio_async(name, value, timeout_seconds, throw_error)
         command.make_command_action()
         command.result()
         self.specific_command = None
+
+    def tcp_delete_async(self, name: str, reset_current: bool = True, apply_other: str = "", timeout_seconds: float = 60.0, throw_error: bool = True) -> TCPDelete:
+        self.specific_command = TCPDelete(
+	        name,
+            self.message_bus.publish,
+            reset_current,
+            apply_other,
+            timeout_seconds,
+            throw_error)
+        self.message_bus.subscribe(COMMAND_TOPIC)
+        self.message_bus.subscribe(COMMAND_RESULT_TOPIC)
+        return self.specific_command
+
+    async def tcp_delete_async_wait(self, name: str, reset_current: bool = True, apply_other: str = "", timeout_seconds: float = 60.0, throw_error: bool = True) -> None:
+        await self._run_async(self.tcp_delete_async, name, reset_current, apply_other, timeout_seconds, throw_error)
+
+    def tcp_delete(self, name: str, reset_current: bool = True, apply_other: str = "", timeout_seconds: float = 60.0, throw_error: bool = True) -> None:
+        command = self.tcp_delete_async(name, reset_current, apply_other, timeout_seconds, throw_error)
+        command.make_command_action()
+        command.result()
+        self.specific_command = None
+
+    def tcp_apply_async(self, name: str, timeout_seconds: float = 60.0, throw_error: bool = True) -> TCPApply:
+        self.specific_command = TCPApply(name, self.message_bus.publish, timeout_seconds, throw_error)
+        self.message_bus.subscribe(COMMAND_TOPIC)
+        self.message_bus.subscribe(COMMAND_RESULT_TOPIC)
+        return self.specific_command
+
+    async def tcp_apply_async_await(self, name: str, timeout_seconds: float = 60.0, throw_error: bool = True) -> None:
+        await self._run_async(self.tcp_apply_async, name, timeout_seconds, throw_error)
+
+    def tcp_apply(self, name: str, timeout_seconds: float = 60.0, throw_error: bool = True) -> None:
+        command = self.tcp_apply_async(name, timeout_seconds, throw_error)
+        command.make_command_action()
+        command.result()
+        self.specific_command = None
+
+    def tcp_get_current_async(self, timeout_seconds: float = 60.0, throw_error: bool = True) -> TCPGetCurrent:
+        self.specific_command = TCPGetCurrent(self.message_bus.publish, timeout_seconds, throw_error)
+        self.message_bus.subscribe(COMMAND_TOPIC)
+        self.message_bus.subscribe(COMMAND_RESULT_TOPIC)
+        return self.specific_command
+
+    def tcp_get_current(self, timeout_seconds: float = 60.0, throw_error: bool = True) -> Dict[str, Any]:
+        command = self.tcp_get_current_async(timeout_seconds, throw_error)
+        command.make_command_action()
+        return command.result()
+
+    def tcp_get_list_async(self, timeout_seconds: float = 60.0, throw_error: bool = True) -> TCPGetList:
+        self.specific_command = TCPGetList(self.message_bus.publish, timeout_seconds, throw_error)
+        self.message_bus.subscribe(COMMAND_TOPIC)
+        self.message_bus.subscribe(COMMAND_RESULT_TOPIC)
+        return self.specific_command
+
+    def tcp_get_list(self, timeout_seconds: float = 60.0, throw_error: bool = True) -> Dict[str, Any]:
+        command = self.tcp_get_list_async(timeout_seconds, throw_error)
+        command.make_command_action()
+        return command.result()
 
     def write_i2c_async(self, name: str, value: int, timeout_seconds: float = 60.0, throw_error: bool = True) -> WriteI2C:
         self.specific_command = WriteI2C(name, value, self.message_bus.publish, timeout_seconds, throw_error)
@@ -739,31 +819,6 @@ class Manipulator:
         command.result()
         self.specific_command = None
 
-    def move_group_async(self, move_type: MoveType, points: list[Union[Point, Pose]], timeout_seconds: float = 60.0, throw_error: bool = True) -> SdkCommand:
-        self.specific_command = MoveGroup(move_type, points)
-        for point in self.specific_command.points:
-            if isinstance(move_type, MoveType.JOINT):
-                return self._run_move_to_angles_command_async(point.positions, timeout_seconds, throw_error)
-            if isinstance(move_type, MoveType.POINT_TO_POINT):
-                position = MoveCoordinatesParamsPosition(point.position.x, point.position.y, point.position.z)
-                orientation = MoveCoordinatesParamsOrientation(point.orientation.x, point.orientation.y, point.orientation.z, point.orientation.w)
-                return self.move_to_coordinates_async(position, orientation, point.velocity_factor, point.acceleration_factor, PlannerType.PTP, timeout_seconds, throw_error)
-            if isinstance(move_type, MoveType.LINE):
-                position = MoveCoordinatesParamsPosition(point.position.x, point.position.y, point.position.z)
-                orientation = MoveCoordinatesParamsOrientation(point.orientation.x, point.orientation.y, point.orientation.z, point.orientation.w)
-                return self.move_to_coordinates_async(position, orientation, point.velocity_factor, point.acceleration_factor, PlannerType.LIN, timeout_seconds, throw_error)
-            if isinstance(move_type, MoveType.ARC):
-                pass
-        return None
-
-    async def move_group_async_await(self, move_type: MoveType, points: list[Union[Point, Pose]], timeout_seconds: float = 60.0, throw_error: bool = True) -> None:
-        await self._run_async(self.move_group, move_type, points, timeout_seconds, throw_error)
-
-    def move_group(self, move_type: MoveType, points: list[Union[Point, Pose]], timeout_seconds: float = 60.0, throw_error: bool = True):
-        command = self.get_joint_limits_async(timeout_seconds, throw_error)
-        command.make_command_action()
-        command.result()
-        self.specific_command = None
 
     def arc_motion_async(self,
                         target: Pose,
@@ -1090,21 +1145,18 @@ class Manipulator:
 
     def run_python_program_no_wait(self,
                                python_code: str,
-                               env_name: str = "",
                                python_version: str = "3.12",
                                requirements: List[str] = None) -> None:
         """
         Запускает Python-программу без ожидания ответа.
 
         :param python_code: Код Python.
-        :param env_name: Имя окружения.
         :param python_version: Версия Python.
         :param requirements: Список требований.
         """
         
         data = {
             "code": python_code,
-            "env_name": env_name,
             "python_version": python_version,
             "requirements": requirements or []
         }
@@ -1426,6 +1478,7 @@ class Manipulator:
         
         self.cartesian_coordinates_promise = None
         self.joint_state_promise = None
+        self.pixy_coordinates_promise = None
         
         print(f"[MANIPULATOR] Все команды очищены")
 
@@ -1593,3 +1646,86 @@ class Manipulator:
         result: dict[str, Any] = self.specific_command.result()
         self.specific_command = None
         return result.get('data', {}).get('value', None)
+
+    def move_group_async(self,
+                         points: Optional[List[Point3D]] = None,
+                         positions: Optional[List[JointPositions]] = None,
+                         move_group: str = "main",
+                         planning_pipeline: str = "pilz_industrial_motion_planner",
+                         planner_id: str = "PTP",
+                         max_velocity: float = 0.5,
+                         max_acceleration: float = 0.5,
+                         min_factorial: float = 0.95,
+                         steps: float = 0.05,
+                         count_points: int = 50,
+                         timeout_seconds: float = 60.0,
+                         throw_error: bool = True) -> MoveGroup:
+        self.specific_command = MoveGroup(
+            self.message_bus.publish,
+            points,
+            positions,
+            move_group,
+            planning_pipeline,
+            planner_id,
+            max_velocity,
+            max_acceleration,
+            min_factorial,
+            steps,
+            count_points,
+            timeout_seconds,
+            throw_error
+        )
+        self.message_bus.subscribe(COMMAND_TOPIC)
+        self.message_bus.subscribe(COMMAND_RESULT_TOPIC)
+        return self.specific_command
+
+    def move_group(self,
+                   points: Optional[List[Point3D]] = None,
+                   positions: Optional[List[JointPositions]] = None,
+                   move_group: str = "main",
+                   planning_pipeline: str = "pilz_industrial_motion_planner",
+                   planner_id: str = "PTP",
+                   max_velocity: float = 0.5,
+                   max_acceleration: float = 0.5,
+                   min_factorial: float = 0.95,
+                   steps: float = 0.05,
+                   count_points: int = 50,
+                   timeout_seconds: float = 60.0,
+                   throw_error: bool = True) -> None:
+        command = self.move_group_async(
+            points=points,
+            positions=positions,
+            move_group=move_group,
+            planning_pipeline=planning_pipeline,
+            planner_id=planner_id,
+            max_velocity=max_velocity,
+            max_acceleration=max_acceleration,
+            min_factorial=min_factorial,
+            steps=steps,
+            count_points=count_points,
+            timeout_seconds=timeout_seconds,
+            throw_error=throw_error
+        )
+        command.make_command_action()
+        command.result()
+        self.specific_command = None
+
+    def get_home_position_async(self, timeout_seconds: float = 60.0, throw_error: bool = True) -> GetHomePosition:
+        self.specific_command = GetHomePosition(
+            self.message_bus.publish,
+            timeout_seconds,
+            throw_error
+        )
+        self.message_bus.subscribe(COMMAND_TOPIC)
+        self.message_bus.subscribe(COMMAND_RESULT_TOPIC)
+        return self.specific_command
+
+    async def get_home_position_async_await(self, timeout_seconds: float = 60.0, throw_error: bool = True) -> dict:
+        return await self._run_async(self.get_home_position, timeout_seconds, throw_error)
+
+    def get_home_position(self, timeout_seconds: float = 60.0, throw_error: bool = True) -> dict:
+        command = self.get_home_position_async(timeout_seconds, throw_error)
+        command.make_command_action()
+        result: dict[str, Any] = self.specific_command.result()
+        self.specific_command = None
+        return result.get('data', {}) if isinstance(result, dict) else {}
